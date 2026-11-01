@@ -34,7 +34,7 @@ final danbooruDioProvider = Provider.family<Dio, BooruConfigAuth>((
   return newDio(
     options: DioOptions(
       ddosProtectionHandler: ddosProtectionHandler,
-      userAgent: ref.watch(defaultUserAgentProvider),
+      userAgent: '${ref.watch(defaultUserAgentProvider)}; user #1212190',
       loggerService: loggerService,
       networkProtocolInfo: ref.watch(
         defaultNetworkProtocolInfoProvider(config),
