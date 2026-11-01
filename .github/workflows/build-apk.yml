@@ -1,2 +1,29 @@
+name: Build APK
+on: workflow_dispatch
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BOORUSAMA_USE_FVM: "false"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: .fvmrc
+          cache: true
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Install Android SDK packages
+        working-directory: packages/boorusama_cli
+        run: dart run boorusama_cli:boorusama setup android-sdk --ci
+      - name: Initialize workspace
+        run: ./init.sh
       - name: Build APK
         run: ./build.sh apk --flavor dev --release --ci --output-dir out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boorusama-apk
+          path: out/**
+          if-no-files-found: error
