@@ -15,12 +15,15 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
-      - run: flutter pub get
       - name: Install Android SDK packages
         working-directory: packages/boorusama_cli
         run: dart run boorusama_cli:boorusama setup android-sdk --ci
-      - run: flutter build apk --release --dart-define-from-file=env/prod.json
+      - name: Initialize workspace
+        run: ./init.sh
+      - name: Build APK
+        run: ./build.sh apk --flavor dev --release --ci --allow-dirty --output-dir out
       - uses: actions/upload-artifact@v4
         with:
           name: boorusama-apk
-          path: build/app/outputs/flutter-apk/*.apk
+          path: out/**
+          if-no-files-found: error
