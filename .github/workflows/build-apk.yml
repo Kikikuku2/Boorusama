@@ -18,6 +18,10 @@ jobs:
       - name: Install Android SDK packages
         working-directory: packages/boorusama_cli
         run: dart run boorusama_cli:boorusama setup android-sdk --ci
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build nasm
       - name: Initialize workspace
         run: ./init.sh
       - name: Build APK
