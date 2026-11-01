@@ -1,0 +1,26 @@
+name: Build APK
+on: workflow_dispatch
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BOORUSAMA_USE_FVM: "false"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: .fvmrc
+          cache: true
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - run: flutter pub get
+      - name: Install Android SDK packages
+        working-directory: packages/boorusama_cli
+        run: dart run boorusama_cli:boorusama setup android-sdk --ci
+      - run: flutter build apk --release --dart-define-from-file=env/prod.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boorusama-apk
+          path: build/app/outputs/flutter-apk/*.apk
