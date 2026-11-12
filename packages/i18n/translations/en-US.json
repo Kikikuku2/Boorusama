@@ -266,7 +266,7 @@
     "errors": {
       "cannot_reach_server": "Cannot reach server, please check your connection",
       "failed_to_load_data": "Failed to load data from server, please try again later",
-      "handshake_failed": "Connection failed, server compatibility issue",
+      "handshake_failed": "Couldn't establish a secure connection. The site may be blocked on your network, or a VPN or proxy may be interfering.",
       "certificate_error": "Certificate error. The server may be using a self-signed certificate. Try using HTTP instead of HTTPS, or install the certificate on your device.",
       "tag_limit": "Maximum tag limit reached. Upgrade your account to search for more tags at once.",
       "database_timeout": "Your search took too long to execute and was cancelled.",
@@ -544,7 +544,8 @@
         "description": "Save tags or post information beside downloaded files.",
         "off": "Off",
         "tags": "Tags (.txt)",
-        "json": "Metadata (.json)"
+        "json": "Metadata (.json)",
+        "skipped_for_folder": "This folder only accepts images and videos, so metadata wasn't saved. Choose a folder like Download or Documents to keep metadata."
       },
       "path": "Download path",
       "select_a_folder": "Select a folder",
@@ -761,7 +762,8 @@
     "no_active_sessions": "No active download sessions",
     "nothing_to_show": "Nothing to show, download updates are empty",
     "notification": {
-      "started": "Download started"
+      "started": "Download started",
+      "queued": "Download queued"
     },
     "status": {
       "in_progress": "In Progress",
@@ -1087,7 +1089,8 @@
       },
       "http": {
         "protocol": "HTTP Protocol",
-        "protocol_description": "Changing the HTTP protocol may help with compatibility or performance on certain sites or platforms.",
+        "protocol_description": "Auto is recommended. Forcing a protocol can get requests blocked by sites with bot protection.",
+        "blocked_with_protocol_override": "This site still blocked the app after verification. This profile forces an HTTP protocol, set it to Auto in the profile's network settings and try again.",
         "skip_cert_verification": "Skip certificate verification",
         "skip_cert_verification_description": "Enable for self-signed certificates (e.g., local servers)",
         "skip_cert_verification_warning_title": "Security Warning",

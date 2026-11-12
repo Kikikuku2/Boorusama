@@ -13,8 +13,10 @@ class DioProtectionInterceptor extends Interceptor {
   DioProtectionInterceptor({
     required HttpProtectionHandler protectionHandler,
     required Dio dio,
+    bool protocolOverridden = false,
   }) : _protectionHandler = protectionHandler,
-       _dio = dio;
+       _dio = dio,
+       _protocolOverridden = protocolOverridden;
 
   static const _attemptKey = 'boorusama.protection_attempt';
 
@@ -28,9 +30,17 @@ class DioProtectionInterceptor extends Interceptor {
       ) as ProtectionAttempt;
 
   static const _protectionRetryKey = 'boorusama.ddos_protection_retry';
+  static const _ownHeadersKey = 'boorusama.protection_own_headers';
+
+  Map<String, String> _ownHeaders(RequestOptions options) =>
+      options.extra.putIfAbsent(
+        _ownHeadersKey,
+        () => options.headers.map((k, v) => MapEntry(k, v.toString())),
+      ) as Map<String, String>;
 
   final HttpProtectionHandler _protectionHandler;
   final Dio _dio;
+  final bool _protocolOverridden;
 
   @override
   Future<void> onRequest(
@@ -47,13 +57,17 @@ class DioProtectionInterceptor extends Interceptor {
       sensitive: ProtectionRequestDetails(options.uri),
     );
     try {
+      final ownHeaders = _ownHeaders(options);
       final headers = await _protectionHandler.prepareRequestHeaders(
         options.uri,
         options.headers.map((k, v) => MapEntry(k, v.toString())),
         attempt: _attempt(options),
+        ownHeaders: ownHeaders,
       );
 
-      options.headers.addAll(headers);
+      options.headers
+        ..clear()
+        ..addAll(headers);
     } catch (e) {
       attempt.record(
         ProtectionOperationFailed(
@@ -129,6 +143,7 @@ class DioProtectionInterceptor extends Interceptor {
       _protectionHandler.observeRetryError(
         DioErrorAdapter(err),
         attempt: attempt,
+        protocolOverridden: _protocolOverridden,
       );
       return handler.next(err);
     }
@@ -196,6 +211,7 @@ class DioProtectionInterceptor extends Interceptor {
     final attempt = _attempt(options);
     final previous = options.extra[_protectionRetryKey];
     options.extra[_protectionRetryKey] = true;
+    var ownIdentityTried = false;
 
     try {
       while (true) {
@@ -205,6 +221,7 @@ class DioProtectionInterceptor extends Interceptor {
           options.uri,
           options.headers.map((k, v) => MapEntry(k, v.toString())),
           attempt: attempt,
+          ownHeaders: _ownHeaders(options),
         );
 
         options.headers
@@ -216,13 +233,24 @@ class DioProtectionInterceptor extends Interceptor {
           await _protectionHandler.confirmRetry(options.uri, attempt);
           return response;
         } on DioException catch (error) {
-          if (attempt.retries >= _protectionHandler.maxRetries ||
-              !_protectionHandler.selectAlternativeClearance(
+          if (ownIdentityTried) {
+            _protectionHandler.forgetOwnIdentity(options.uri);
+            rethrow;
+          }
+          if (attempt.retries < _protectionHandler.maxRetries &&
+              _protectionHandler.selectAlternativeClearance(
                 DioErrorAdapter(error),
                 attempt,
               )) {
+            continue;
+          }
+          if (!_protectionHandler.selectOwnIdentity(
+            DioErrorAdapter(error),
+            attempt,
+          )) {
             rethrow;
           }
+          ownIdentityTried = true;
         }
       }
     } finally {

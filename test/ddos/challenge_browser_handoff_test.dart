@@ -47,7 +47,18 @@ const _browserChallengePage = '''
 <body><div id="challenge-running"></div></body>
 </html>''';
 
+// A checkbox challenge served with a success status in place of the resource.
+const _checkboxChallengePage = '''
+<html>
+<body>
+<p id="challenge-prompt">Wait for signal before clicking the checkbox...</p>
+<div class="challenge-container"><input id="challenge-checkbox" type="checkbox"></div>
+<script>const challenge_id = "a"; const challenge_generated = "1";</script>
+</body>
+</html>''';
+
 const _actionPath = '/action';
+const _appUserAgent = 'App/1.0';
 const _openPath = '/open';
 
 void main() {
@@ -185,6 +196,39 @@ void main() {
     );
   }
 
+  testWidgets(
+    'clearance the browser already holds replaces a stale copy in the app',
+    (tester) async {
+      final site = _Site(
+        blockedBody: _checkboxChallengePage,
+        blockedStatus: 200,
+        unblockedBy: 'atf-anti-bot=valid',
+      );
+      final harness = await _Harness.pump(
+        tester,
+        site: site,
+        browserCookies: const [
+          BrowserCookie(
+            name: 'atf-anti-bot',
+            value: 'valid',
+            domain: 'example.com',
+            path: '/',
+          ),
+        ],
+        requestCookies: [
+          Cookie('atf-anti-bot', 'stale')
+            ..domain = '.example.com'
+            ..path = '/',
+        ],
+      );
+
+      final sent = await harness.send(tester, '/data/image.jpg');
+
+      expect(sent.result, 'HTTP 200 "done"');
+      expect(site.cookieHeaders.last, isNot(contains('atf-anti-bot=stale')));
+    },
+  );
+
   for (final validFirst in [true, false]) {
     testWidgets(
       'reused same-scope clearance cookies select the token accepted by HTTP (validFirst=$validFirst)',
@@ -260,8 +304,11 @@ void main() {
       final sent = await harness.send(tester, '/post.json');
 
       expect(sent.result, 'HTTP 403');
-      expect(site.appRequests, 4);
-      expect(site.cookieHeaders.skip(1).toSet(), hasLength(3));
+      expect(site.appRequests, 5);
+      expect(
+        site.cookieHeaders.where((h) => h.contains('cf_clearance')).toSet(),
+        hasLength(3),
+      );
       expect(site.browserPaths, hasLength(1));
       expect(find.byType(ProtectionOverlay), findsNothing);
     },
@@ -358,9 +405,98 @@ void main() {
       expect(immediate.challengeShown, isFalse);
       expect(later.challengeShown, isTrue);
       expect(site.browserPaths, hasLength(2));
-      expect(site.appRequests, 5);
+      expect(site.appRequests, 7);
     },
   );
+
+  group('a site that refuses the browser identity after a solve', () {
+    Future<(_Site, _Harness)> pump(WidgetTester tester) async {
+      final site = _Site(
+        blockedBody: _turnstileCaptchaPage,
+        refusedUserAgent: 'TestAgent/1.0',
+      );
+      final harness = await _Harness.pump(
+        tester,
+        site: site,
+        requestCookies: [Cookie('session', 'signed-in')],
+        browserCookies: [
+          const BrowserCookie(
+            name: 'cf_clearance',
+            value: 'valid',
+            domain: '.example.com',
+            path: '/',
+          ),
+        ],
+      );
+      return (site, harness);
+    }
+
+    testWidgets('the request succeeds as the app itself', (tester) async {
+      final (site, harness) = await pump(tester);
+
+      final sent = await harness.send(tester, '/post');
+
+      expect(sent.result, 'HTTP 200 "done"');
+      expect(site.userAgents.last, _appUserAgent);
+      expect(site.cookieHeaders.last, contains('session=signed-in'));
+      expect(site.cookieHeaders.last, isNot(contains('cf_clearance')));
+    });
+
+    testWidgets('requests waiting on the same challenge all succeed', (
+      tester,
+    ) async {
+      final (_, harness) = await pump(tester);
+
+      final results = await harness.sendTogether(tester, [
+        '/post/1',
+        '/post/2',
+        '/post/3',
+      ]);
+
+      expect(results, everyElement('HTTP 200 "done"'));
+    });
+
+    testWidgets('later requests go out as the app without a challenge', (
+      tester,
+    ) async {
+      final (site, harness) = await pump(tester);
+
+      await harness.send(tester, '/post');
+      final requestsBefore = site.appRequests;
+      final later = await harness.send(tester, '/post/2');
+
+      expect(later.result, 'HTTP 200 "done"');
+      expect(later.challengeShown, isFalse);
+      expect(site.appRequests - requestsBefore, 1);
+      expect(site.browserPaths, hasLength(1));
+    });
+  });
+
+  for (final c in [
+    (protocolOverridden: true, hints: ['example.com']),
+    (protocolOverridden: false, hints: <String>[]),
+  ]) {
+    testWidgets(
+      'a solve that leaves the app blocked ${c.protocolOverridden ? 'suggests the automatic protocol once' : 'does not mention the protocol'} when the profile ${c.protocolOverridden ? 'forces' : 'does not force'} one',
+      (tester) async {
+        var now = DateTime.utc(2026, 10, 4);
+        final site = _Site(blockedBody: _turnstileCaptchaPage);
+        final harness = await _Harness.pump(
+          tester,
+          site: site,
+          clock: Clock(() => now),
+          protocolOverridden: c.protocolOverridden,
+        );
+
+        await harness.sendAction(tester);
+        now = now.add(const Duration(seconds: 30));
+        final again = await harness.sendAction(tester);
+
+        expect(again.challengeShown, isTrue);
+        expect(harness.protocolHints, c.hints);
+      },
+    );
+  }
 }
 
 List<ProtectionDetector> _detectors() => [
@@ -372,7 +508,7 @@ List<ProtectionDetector> _detectors() => [
 typedef _Sent = ({String? result, bool challengeShown, bool challengeVisible});
 
 class _Harness {
-  _Harness._(this.dio);
+  _Harness._(this.dio, this.protocolHints);
 
   static Future<_Harness> pump(
     WidgetTester tester, {
@@ -381,7 +517,9 @@ class _Harness {
     List<BrowserCookie>? initialBrowserCookies,
     List<Cookie> requestCookies = const [],
     Clock clock = const Clock(),
+    bool protocolOverridden = false,
   }) async {
+    final protocolHints = <String>[];
     late BuildContext pageContext;
     await tester.pumpWidget(
       BooruLocalization(
@@ -414,6 +552,7 @@ class _Harness {
     BuildContext? contextProvider() => pageContext;
     final handler = HttpProtectionHandler(
       clock: clock,
+      onBlockedWithProtocolOverride: (uri) => protocolHints.add(uri.host),
       orchestrator: ProtectionOrchestrator(
         detectors: _detectors(),
         solvers: [
@@ -438,15 +577,24 @@ class _Harness {
       contextProvider: contextProvider,
       cookieJar: cookieJar,
     );
-    final dio = Dio(BaseOptions(baseUrl: 'https://example.com'))
-      ..httpClientAdapter = site;
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: 'https://example.com',
+        headers: {'user-agent': _appUserAgent},
+      ),
+    )..httpClientAdapter = site;
     dio.interceptors.add(
-      DioProtectionInterceptor(protectionHandler: handler, dio: dio),
+      DioProtectionInterceptor(
+        protectionHandler: handler,
+        dio: dio,
+        protocolOverridden: protocolOverridden,
+      ),
     );
-    return _Harness._(dio);
+    return _Harness._(dio, protocolHints);
   }
 
   final Dio dio;
+  final List<String> protocolHints;
 
   Future<_Sent> sendAction(WidgetTester tester) =>
       send(tester, _actionPath, stateChanging: true);
@@ -494,6 +642,32 @@ class _Harness {
     );
   }
 
+  /// Sends requests at the same time, as a page loading several resources.
+  Future<List<String?>> sendTogether(
+    WidgetTester tester,
+    List<String> paths,
+  ) async {
+    final results = List<String?>.filled(paths.length, null);
+    for (final (i, path) in paths.indexed) {
+      unawaited(
+        dio
+            .get<String>(path)
+            .then(
+              (r) => results[i] = 'HTTP ${r.statusCode} "${r.data}"',
+              onError: (Object e) => results[i] = switch (e) {
+                DioException(:final response?) => 'HTTP ${response.statusCode}',
+                _ => e.toString(),
+              },
+            ),
+      );
+    }
+    for (var frame = 0; frame < 200 && results.contains(null); frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(const Duration(seconds: 2));
+    return results;
+  }
+
   Future<void> cancelChallenge(WidgetTester tester) async {
     final overlay = find.byType(ProtectionOverlay);
     if (overlay.evaluate().isNotEmpty) {
@@ -508,9 +682,20 @@ class _Harness {
 /// carries [unblockedBy]. A real browser, already logged in, is never
 /// challenged.
 class _Site implements HttpClientAdapter {
-  _Site({required this.blockedBody, this.unblockedBy, this.browserBody});
+  _Site({
+    required this.blockedBody,
+    this.blockedStatus = 403,
+    this.unblockedBy,
+    this.browserBody,
+    this.refusedUserAgent,
+  });
+
+  /// A user agent the app is blocked with even after a solve, as when a site
+  /// tells a borrowed browser identity from the app's own connection.
+  final String? refusedUserAgent;
 
   final String blockedBody;
+  final int blockedStatus;
 
   /// What the browser sees instead of the requested page, if anything.
   final String? browserBody;
@@ -519,6 +704,7 @@ class _Site implements HttpClientAdapter {
   var actionsPerformedByBrowser = 0;
   final browserPaths = <String>[];
   final cookieHeaders = <String>[];
+  final userAgents = <String>[];
 
   String browserPage(Uri uri) => switch ((browserPaths..add(uri.path)).last) {
     _actionPath => () {
@@ -542,17 +728,25 @@ class _Site implements HttpClientAdapter {
         .map((e) => '${e.value}')
         .firstOrNull;
     cookieHeaders.add(cookie ?? '');
-    final unblocked =
+    final userAgent = options.headers.entries
+        .where((e) => e.key.toLowerCase() == 'user-agent')
+        .map((e) => '${e.value}')
+        .firstOrNull;
+    userAgents.add(userAgent ?? '');
+    final unblocked = switch (refusedUserAgent) {
+      final refused? => userAgent != refused,
+      null =>
         options.uri.path == _openPath ||
-        switch ((unblockedBy, cookie)) {
-          (final key?, final cookie?) => cookie.contains(key),
-          _ => false,
-        };
+            switch ((unblockedBy, cookie)) {
+              (final key?, final cookie?) => cookie.contains(key),
+              _ => false,
+            },
+    };
     return switch (unblocked) {
       true => ResponseBody.fromString('done', 200),
       false => ResponseBody.fromString(
         blockedBody,
-        403,
+        blockedStatus,
         headers: {
           Headers.contentTypeHeader: ['text/html'],
         },
@@ -631,6 +825,8 @@ class _Browser implements EmbeddedBrowserSession {
       jsonEncode(switch (source) {
         'document.contentType' when _current?.path.endsWith('.json') ?? false =>
           'application/json',
+        'document.contentType' when _current?.path.endsWith('.jpg') ?? false =>
+          'image/jpeg',
         'document.contentType' => 'text/html',
         _ => _page,
       });
